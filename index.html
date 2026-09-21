@@ -218,8 +218,6 @@ input[type=checkbox]{width:auto;accent-color:var(--dark);cursor:pointer}
 <script>
 const SUPABASE_URL = 'https://tmwdinfnjqsqjjgchppd.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtd2RpbmZuanFzcWpqZ2NocHBkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDE2MTYsImV4cCI6MjEwNTQ3NzYxNn0.wiCmdqDw0BsXFN9O8KOiOC6WFHmm7qDN8lYtTnKFELw';
-// Ключ Геокодера — используется для поиска адресов
-const YANDEX_GEOCODER_KEY = '226a05e2-665d-4e55-bbbd-2ff85a30eea6';
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -1101,34 +1099,35 @@ function openMapPicker(target, initialQuery){
   document.getElementById('picker-cancel').onclick = closePicker;
   document.getElementById('picker-overlay').addEventListener('click', e=>{ if(e.target.id==='picker-overlay') closePicker(); });
 
-  // Поиск через HTTP Геокодер Яндекса + CORS-прокси
+  // Поиск через Nominatim (OpenStreetMap) — бесплатно, без ключей, поддерживает CORS
   async function doSearch(q){
     if(!q) return;
     const resultsEl = document.getElementById('picker-results');
     resultsEl.style.display = 'block';
     resultsEl.innerHTML = '<div class="search-item" style="color:#4a6b66">Поиск…</div>';
     try {
-      const targetUrl = `https://geocode-maps.yandex.ru/1.x/?apikey=${YANDEX_GEOCODER_KEY}&format=json&lang=ru_RU&results=5&geocode=${encodeURIComponent(q)}`;
-      // Используем CORS-прокси allorigins, чтобы обойти блокировку браузера
-      const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
-      const response = await fetch(proxyUrl);
+      const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&accept-language=ru&q=' + encodeURIComponent(q);
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
       if(!response.ok) throw new Error('HTTP ' + response.status);
       const data = await response.json();
 
-      const members = data?.response?.GeoObjectCollection?.featureMember || [];
-      const arr = members.map(m => {
-        const geo = m.GeoObject;
-        const pos = geo?.Point?.pos || '';
-        const [lon, lat] = pos.split(' ').map(Number);
-        const text = geo?.metaDataProperty?.GeocoderMetaData?.text || geo?.name || 'Без названия';
-        return { display_name: text, lat, lon };
-      }).filter(a => !isNaN(a.lat) && !isNaN(a.lon));
-
-      if(!arr.length){
+      if(!data.length){
         resultsEl.innerHTML = '<div class="search-item" style="color:#4a6b66">Ничего не найдено</div>';
         return;
       }
+
+      const arr = data.map(item => ({
+        display_name: item.display_name,
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon)
+      })).filter(a => !isNaN(a.lat) && !isNaN(a.lon));
+
       resultsEl.innerHTML = arr.map((a,i)=>`<div class="search-item" data-i="${i}">${esc(a.display_name)}</div>`).join('');
+
       resultsEl.querySelectorAll('.search-item').forEach(el=>{
         el.onclick = ()=>{
           const a = arr[Number(el.dataset.i)];
