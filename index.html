@@ -18,8 +18,8 @@
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Яндекс Карты: API + плагин для Leaflet -->
-<script src="https://api-maps.yandex.ru/2.1/?apikey=226a05e2-665d-4e55-bbbd-2ff85a30eea6&lang=ru_RU" type="text/javascript"></script>
+<!-- Яндекс Карты: JavaScript API (для отображения карты) -->
+<script src="https://api-maps.yandex.ru/2.1/?apikey=e7864472-d690-4c07-b590-23787749977b&lang=ru_RU" type="text/javascript"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-plugins@3.4.0/layer/tile/Yandex.js"></script>
 <style>
 :root{
@@ -218,7 +218,8 @@ input[type=checkbox]{width:auto;accent-color:var(--dark);cursor:pointer}
 <script>
 const SUPABASE_URL = 'https://tmwdinfnjqsqjjgchppd.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtd2RpbmZuanFzcWpqZ2NocHBkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDE2MTYsImV4cCI6MjEwNTQ3NzYxNn0.wiCmdqDw0BsXFN9O8KOiOC6WFHmm7qDN8lYtTnKFELw';
-const YANDEX_API_KEY = '226a05e2-665d-4e55-bbbd-2ff85a30eea6';
+// Ключ Геокодера — используется для поиска адресов
+const YANDEX_GEOCODER_KEY = '226a05e2-665d-4e55-bbbd-2ff85a30eea6';
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -1100,21 +1101,29 @@ function openMapPicker(target, initialQuery){
   document.getElementById('picker-cancel').onclick = closePicker;
   document.getElementById('picker-overlay').addEventListener('click', e=>{ if(e.target.id==='picker-overlay') closePicker(); });
 
-  // Поиск через ymaps.geocode (JavaScript API)
+  // Поиск через HTTP Геокодер Яндекса + CORS-прокси
   async function doSearch(q){
     if(!q) return;
     const resultsEl = document.getElementById('picker-results');
     resultsEl.style.display = 'block';
     resultsEl.innerHTML = '<div class="search-item" style="color:#4a6b66">Поиск…</div>';
     try {
-      await new Promise(resolve => ymaps.ready(resolve));
-      const res = await ymaps.geocode(q, { results: 5, lang: 'ru_RU' });
-      const arr = [];
-      res.geoObjects.each(obj => {
-        const coords = obj.geometry.getCoordinates();
-        const text = obj.properties.get('text') || obj.properties.get('name') || 'Без названия';
-        arr.push({ display_name: text, lat: coords[0], lon: coords[1] });
-      });
+      const targetUrl = `https://geocode-maps.yandex.ru/1.x/?apikey=${YANDEX_GEOCODER_KEY}&format=json&lang=ru_RU&results=5&geocode=${encodeURIComponent(q)}`;
+      // Используем CORS-прокси allorigins, чтобы обойти блокировку браузера
+      const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
+      const response = await fetch(proxyUrl);
+      if(!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+
+      const members = data?.response?.GeoObjectCollection?.featureMember || [];
+      const arr = members.map(m => {
+        const geo = m.GeoObject;
+        const pos = geo?.Point?.pos || '';
+        const [lon, lat] = pos.split(' ').map(Number);
+        const text = geo?.metaDataProperty?.GeocoderMetaData?.text || geo?.name || 'Без названия';
+        return { display_name: text, lat, lon };
+      }).filter(a => !isNaN(a.lat) && !isNaN(a.lon));
+
       if(!arr.length){
         resultsEl.innerHTML = '<div class="search-item" style="color:#4a6b66">Ничего не найдено</div>';
         return;
